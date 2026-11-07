@@ -1,0 +1,2 @@
+# deckcraft
+Preserved Deckcraft source4 integration component; personal progress repository with offline native/WASM inputs.
