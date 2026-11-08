@@ -118,18 +118,18 @@ impl SlideApp {
                 self.notes_buf.2.edited.then_some((&self.notes_buf.0, &self.notes_buf.1, &self.notes_buf.2.body))
             ),
         };
-        if let Some(old) = &self.office.key {
-            if old != &key {
-                let mut delta = 0u64;
-                for (uid, rev, ptr) in &key.documents {
-                    delta = delta.saturating_add(match old.documents.iter().find(|d| d.0 == *uid) {
-                        Some((_, before, previous)) => rev.saturating_sub(*before).max(u64::from(previous != ptr)),
-                        None => 1,
-                    });
-                }
-                delta = delta.saturating_add(old.documents.iter().filter(|d| !key.documents.iter().any(|k| k.0 == d.0)).count() as u64);
-                self.office.revision = self.office.revision.saturating_add(delta.max(1)).min(9_007_199_254_740_991);
+        if let Some(old) = &self.office.key
+            && old != &key
+        {
+            let mut delta = 0u64;
+            for (uid, rev, ptr) in &key.documents {
+                delta = delta.saturating_add(match old.documents.iter().find(|d| d.0 == *uid) {
+                    Some((_, before, previous)) => rev.saturating_sub(*before).max(u64::from(previous != ptr)),
+                    None => 1,
+                });
             }
+            delta = delta.saturating_add(old.documents.iter().filter(|d| !key.documents.iter().any(|k| k.0 == d.0)).count() as u64);
+            self.office.revision = self.office.revision.saturating_add(delta.max(1)).min(9_007_199_254_740_991);
         }
         self.office.key = Some(key);
         self.office.revision
@@ -194,10 +194,10 @@ impl SlideApp {
             let Some(save) = self.office.pending.remove(&ticket) else { continue };
             if !matches!(outcome, SaveOutcome::Saved) {
                 self.office.close_after_save.remove(&save.document);
-            } else if let Some(action) = self.office.close_after_save.get_mut(&save.document) {
-                if action.ticket == ticket {
-                    action.acknowledged = true;
-                }
+            } else if let Some(action) = self.office.close_after_save.get_mut(&save.document)
+                && action.ticket == ticket
+            {
+                action.acknowledged = true;
             }
             if save.copy {
                 // A copy's acknowledgement never changes the source's path/saved snapshot.
@@ -254,10 +254,10 @@ impl SlideApp {
     pub fn office_call(&mut self, method: &str, params: &Value, bytes: Option<&[u8]>) -> OfficeResult<OfficeReply> {
         self.office_poll_saves();
         let revision = self.office_revision();
-        if let Some(expected) = params.get("expectedRevision") {
-            if expected.as_u64() != Some(revision) {
-                return Err(error("STALE_REVISION", "Presentation revision does not match"));
-            }
+        if let Some(expected) = params.get("expectedRevision")
+            && expected.as_u64() != Some(revision)
+        {
+            return Err(error("STALE_REVISION", "Presentation revision does not match"));
         }
         if !METHODS.contains(&method) {
             return Err(error("UNSUPPORTED", "Method is not implemented"));

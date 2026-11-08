@@ -363,8 +363,7 @@ fn read_axes<'a>(c: &mut Chart, pa: &'a El, primary_val: &Option<String>) -> (Op
     // `c:tickLblPos val="none"` hides the labels just as `c:delete` does.
     let deleted = |a: &El| a.child("delete").and_then(|d| d.bool("val")) == Some(true) || a.child_val("tickLblPos") == Some("none");
     // A gridline whose `c:spPr/a:ln` has `a:noFill` is not drawn, though the element is there.
-    let grid =
-        |a: &El, k: &str| a.child(k).is_some_and(|g| !g.child("spPr").and_then(|p| p.child("ln")).is_some_and(|l| l.child("noFill").is_some()));
+    let grid = |a: &El, k: &str| a.child(k).is_some_and(|g| g.child("spPr").and_then(|p| p.child("ln")).is_none_or(|l| l.child("noFill").is_none()));
     if c.kind == ChartType::Combo && c.series.iter().any(|s| s.secondary_axis) {
         let primary_id = val_ax.and_then(|a| a.child_val("axId"));
         // The other vertical value axis is the secondary one.

@@ -125,7 +125,7 @@ fn section_header(app: &mut SlideApp, ui: &mut Ui, h: &Header<'_>) -> Rect {
             app.sorter.rename_started = true;
         }
         let (enter, esc) = ui.input(|i| (i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::Escape)));
-        app.office_record_draft(&draft_key, &h.name, &buf);
+        app.office_record_draft(&draft_key, h.name, &buf);
         // The frame that asks for focus has not had it yet; committing then would cancel the rename.
         if already && (out.lost_focus() || enter || esc) {
             app.sorter.renaming = None;
@@ -564,10 +564,9 @@ fn outline_slide(app: &mut SlideApp, ui: &mut Ui, t: &Tokens, i: usize, s: &deck
         if resp.lost_focus()
             && v != cur_title
             && let Some(tid) = title_shape
+            && let Err(error) = app.office_commit_draft(&draft_key, "text.set", json!({"id":tid,"text":v}))
         {
-            if let Err(error) = app.office_commit_draft(&draft_key, "text.set", json!({"id":tid,"text":v})) {
-                app.set_status(error);
-            }
+            app.set_status(error);
         }
     });
     // Footer, date and slide-number placeholders are not outline text, as in PowerPoint.
@@ -596,10 +595,11 @@ fn outline_slide(app: &mut SlideApp, ui: &mut Ui, t: &Tokens, i: usize, s: &deck
                 let _ = app.run("slide.go", json!({"index": i}));
             }
             app.office_record_draft(&draft_key, &cur_text, &v);
-            if resp.lost_focus() && v != cur_text {
-                if let Err(error) = app.office_commit_draft(&draft_key, "text.set", json!({"id":sh.id.0,"text":v})) {
-                    app.set_status(error);
-                }
+            if resp.lost_focus()
+                && v != cur_text
+                && let Err(error) = app.office_commit_draft(&draft_key, "text.set", json!({"id":sh.id.0,"text":v}))
+            {
+                app.set_status(error);
             }
         });
     }

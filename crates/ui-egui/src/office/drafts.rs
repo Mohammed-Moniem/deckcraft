@@ -282,31 +282,32 @@ impl SlideApp {
                     ui.label(format!("Uncommitted {label}"));
                     if !draft.owner.matches(self) {
                         ui.label("Original owner or history differs; posting is blocked.");
-                        if ui.button("Return to draft owner").clicked() {
-                            if let Some(i) = self.session.documents().iter().position(|d| d.uid == draft.owner.uid) {
-                                self.session.set_active(i);
-                            }
+                        if ui.button("Return to draft owner").clicked()
+                            && let Some(i) = self.session.documents().iter().position(|d| d.uid == draft.owner.uid)
+                        {
+                            self.session.set_active(i);
                         }
-                        if ui.button("Resume on original target").clicked() {
-                            if let Err(error) = self.office_resume_draft(&key) {
-                                self.set_status(error);
-                            }
-                        }
-                        if ui.button("Undo in original presentation").clicked() {
-                            if let Err(error) = draft.owner.history(self, false) {
-                                self.set_status(error);
-                            }
-                        }
-                        if ui.button("Redo in original presentation").clicked() {
-                            if let Err(error) = draft.owner.history(self, true) {
-                                self.set_status(error);
-                            }
-                        }
-                    }
-                    if draft.owner.matches(self) && ui.button("Continue editing draft").clicked() {
-                        if let Err(error) = self.office_resume_draft(&key) {
+                        if ui.button("Resume on original target").clicked()
+                            && let Err(error) = self.office_resume_draft(&key)
+                        {
                             self.set_status(error);
                         }
+                        if ui.button("Undo in original presentation").clicked()
+                            && let Err(error) = draft.owner.history(self, false)
+                        {
+                            self.set_status(error);
+                        }
+                        if ui.button("Redo in original presentation").clicked()
+                            && let Err(error) = draft.owner.history(self, true)
+                        {
+                            self.set_status(error);
+                        }
+                    }
+                    if draft.owner.matches(self)
+                        && ui.button("Continue editing draft").clicked()
+                        && let Err(error) = self.office_resume_draft(&key)
+                    {
+                        self.set_status(error);
                     }
                     if ui.button("Discard draft").clicked() {
                         self.office_discard_draft(&key);

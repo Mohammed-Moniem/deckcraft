@@ -142,7 +142,7 @@ pub fn correct_word(prefs: &crate::Prefs, word: &str, sentence_start: bool, typi
 
 /// After a space or punctuation, correct the word just typed.
 pub(super) fn autocorrect(s: &mut Session, typing: bool) -> Result<()> {
-    if !s.prefs.autocorrect && !(typing && s.prefs.ac_lists) {
+    if !(s.prefs.autocorrect || typing && s.prefs.ac_lists) {
         return Ok(());
     }
     let st = s.doc()?;

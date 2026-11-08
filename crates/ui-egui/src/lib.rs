@@ -16,7 +16,6 @@ pub const UPDATE_APP: craft_update::app::App = craft_update::app::App {
 };
 
 pub mod async_saves;
-pub mod office;
 pub mod backstage;
 pub mod canvas;
 pub mod capture;
@@ -27,6 +26,7 @@ pub mod eyedropper;
 pub mod icons;
 pub mod media;
 pub mod menus;
+pub mod office;
 pub mod opening;
 pub mod presenter;
 pub mod ribbon;

@@ -83,6 +83,12 @@ impl Default for Table {
     }
 }
 
+/// Local grid limit for densification and table edits. Existing larger tables retain their data.
+pub const MAX_CELLS: usize = 100_000;
+/// Cell visits [`Table::merge`] may spend growing its rectangle over existing merges: a few
+/// passes over the largest grid, where a real table needs one or two.
+const MAX_MERGE_WORK: usize = 16 * MAX_CELLS;
+
 impl Table {
     pub fn new(rows: usize, cols: usize, width: f64, row_height: f64) -> Self {
         let rows = rows.clamp(1, 1000);
@@ -170,8 +176,12 @@ impl Table {
         true
     }
     /// The merged areas: every uncovered cell spanning more than one cell, clipped to the grid.
+    /// Merges of a well-formed table do not overlap, so together they cover at most the grid;
+    /// spans whose summed area exceeds the grid are dropped. This bounds rebuild work;
+    /// partially overlapping spans whose summed area fits are not otherwise repaired.
     fn merges(&self) -> Vec<Merge> {
         let (nr, nc) = (self.rows.len(), self.cols.len());
+        let mut area = nr.saturating_mul(nc);
         let mut out = vec![];
         for (r, row) in self.rows.iter().enumerate() {
             for (c, cell) in row.cells.iter().enumerate().take(nc) {
@@ -180,7 +190,10 @@ impl Table {
                 }
                 let rs = (cell.row_span.max(1) as usize).min(nr - r);
                 let gs = (cell.grid_span.max(1) as usize).min(nc - c);
-                if rs > 1 || gs > 1 {
+                if (rs > 1 || gs > 1)
+                    && let Some(left) = area.checked_sub(rs.saturating_mul(gs))
+                {
+                    area = left;
                     out.push(Merge { r, c, rs, gs });
                 }
             }
@@ -226,16 +239,25 @@ impl Table {
             *x = b;
         }
     }
-    /// Merge the rectangle (r0,c0)–(r1,c1) inclusive into its top-left cell.
-    pub fn merge(&mut self, r0: usize, c0: usize, r1: usize, c1: usize) -> bool {
+    /// Admit the merge rectangle without changing cells or collecting text. The work budget
+    /// and rectangle expansion are shared by callers and the mutating merge.
+    pub fn merge_bounds(&self, r0: usize, c0: usize, r1: usize, c1: usize) -> Option<((usize, usize), (usize, usize))> {
         let (r0, r1) = (r0.min(r1), r0.max(r1));
         let (c0, c1) = (c0.min(c1), c0.max(c1));
         if r1 >= self.rows.len() || c1 >= self.cols.len() || (r0 == r1 && c0 == c1) {
-            return false;
+            return None;
         }
-        // Grow the rectangle until no existing merge sticks out of it.
+        // Grow the rectangle until no existing merge sticks out of it. Each pass reads the whole
+        // grid and may grow it by one row, so the passes are charged against
+        // [`MAX_MERGE_WORK`]: past it the merge is refused, before anything changed.
         let (mut r0, mut c0, mut r1, mut c1) = (r0, c0, r1, c1);
+        let pass = self.rows.len().saturating_mul(self.cols.len()).max(1);
+        let mut work = 0usize;
         loop {
+            work = work.saturating_add(pass);
+            if work > MAX_MERGE_WORK {
+                return None;
+            }
             let before = (r0, c0, r1, c1);
             for (r, row) in self.rows.iter().enumerate() {
                 for (c, cell) in row.cells.iter().enumerate().take(self.cols.len()) {
@@ -256,6 +278,12 @@ impl Table {
                 break;
             }
         }
+        Some(((r0, c0), (r1, c1)))
+    }
+
+    /// Merge the admitted rectangle into its top-left cell.
+    pub fn merge(&mut self, r0: usize, c0: usize, r1: usize, c1: usize) -> bool {
+        let Some(((r0, c0), (r1, c1))) = self.merge_bounds(r0, c0, r1, c1) else { return false };
         let mut text = vec![];
         for r in r0..=r1 {
             for c in c0..=c1 {
@@ -289,20 +317,43 @@ impl Table {
             return false;
         }
         // Spans come from the file and may reach past the table; only walk the cells that exist.
-        for rr in r..r.saturating_add(rs).min(self.rows.len()) {
-            for cc in c..c.saturating_add(gs).min(self.cols.len()) {
-                if let Some(x) = self.cell_mut(rr, cc) {
-                    x.h_merge = false;
-                    x.v_merge = false;
-                    x.grid_span = 1;
-                    x.row_span = 1;
-                }
+        let end = r.saturating_add(rs).min(self.rows.len());
+        let gs = gs.min(self.cols.len().saturating_sub(c));
+        for row in self.rows.get_mut(r..end).unwrap_or_default() {
+            for x in row.cells.iter_mut().skip(c).take(gs) {
+                x.h_merge = false;
+                x.v_merge = false;
+                x.grid_span = 1;
+                x.row_span = 1;
             }
         }
         true
     }
-    /// Make every row have exactly `cols.len()` cells (repair after loading).
+    /// Whether every stored row already has the declared width. Existing larger rectangular
+    /// tables remain normalized even when they exceed the local edit limit.
+    pub fn is_normalized(&self) -> bool {
+        self.rows.iter().all(|r| r.cells.len() == self.cols.len())
+    }
+    /// Whether these dimensions fit the local densification/edit limit, without overflow.
+    pub fn fits_cell_limit(rows: usize, cols: usize) -> bool {
+        cols <= MAX_CELLS && rows <= MAX_CELLS / cols.max(1)
+    }
+    /// Whether rectangularizing this table can fill missing cells within the local limit and
+    /// without discarding existing cells beyond the declared width.
+    pub fn can_normalize(&self) -> bool {
+        Self::fits_cell_limit(self.rows.len(), self.cols.len()) && self.rows.iter().all(|r| r.cells.len() <= self.cols.len())
+    }
+    /// Fill missing cells and repair zero spans when supported. Oversized or over-wide rows are
+    /// retained unchanged: import/export callers must never silently remove stored table data.
+    /// Editing callers use try_normalize to report a named refusal instead.
     pub fn normalize(&mut self) {
+        self.try_normalize();
+    }
+    /// Normalize without deleting rows, columns or existing cells. A refusal changes nothing.
+    pub fn try_normalize(&mut self) -> bool {
+        if !self.can_normalize() {
+            return false;
+        }
         let n = self.cols.len();
         for r in &mut self.rows {
             r.cells.resize_with(n, || Cell::new(""));
@@ -311,6 +362,7 @@ impl Table {
                 c.row_span = c.row_span.max(1);
             }
         }
+        true
     }
 }
 
@@ -517,6 +569,132 @@ mod tests {
                 assert_eq!(*n, 1, "cell ({r},{c}) owned {n} times");
             }
         }
+    }
+
+    /// Each cell spans two rows, uncovered: merging the last two rows would grow the rectangle a
+    /// row per pass over the whole grid, about 1,000 passes. The merge is refused at its work bound
+    /// instead, leaving the table as it was; a small merge still works.
+    #[test]
+    fn merge_expansion_stops_at_its_work_bound() {
+        let mut t = Table::new(1_000, 10, 400.0, 30.0);
+        assert_eq!((t.n_rows(), t.n_cols()), (1_000, 10));
+        for row in &mut t.rows {
+            for c in &mut row.cells {
+                c.row_span = 2;
+            }
+        }
+        let before = t.clone();
+        assert!(t.cell(998, 0).is_some() && t.cell(999, 9).is_some(), "coordinates must reach the expansion loop");
+        assert!(!t.merge(998, 0, 999, 9));
+        assert_eq!(t, before);
+        let mut small = Table::new(4, 4, 400.0, 30.0);
+        assert!(small.merge(0, 0, 1, 1));
+        assert!(small.is_normalized() && !Table { cols: vec![1.0; 3], rows: vec![Row::default(); 2], ..Default::default() }.is_normalized());
+    }
+
+    #[test]
+    fn merge_admission_is_read_only_at_the_exact_work_boundary() {
+        let mut t = Table::new(400, 10, 400.0, 30.0);
+        for row in &mut t.rows {
+            for cell in &mut row.cells {
+                cell.row_span = 2;
+            }
+        }
+        t.cell_mut(0, 0).unwrap().text = TextBody::from_text("KEEP");
+        let before = t.clone();
+        assert_eq!(t.merge_bounds(399, 0, 399, 9), Some(((0, 0), (399, 9))));
+        assert_eq!(t, before, "planning must not consume or collect cell text");
+        assert!(t.merge(399, 0, 399, 9));
+        assert_eq!(t.cell(0, 0).unwrap().text.text(), "KEEP");
+        assert_eq!(t.cell(0, 0).unwrap().row_span, 400);
+    }
+
+    #[test]
+    fn normalize_fills_supported_sparse_grid_without_discarding_data() {
+        let mut t = Table { cols: vec![10.0; 1000], rows: vec![Row::default(); 100], ..Default::default() };
+        t.rows[99].cells.push(Cell::new("TAIL"));
+        assert!(t.try_normalize());
+        assert_eq!(t.cols.len(), 1000);
+        assert_eq!(t.rows.len(), MAX_CELLS / 1000);
+        assert!(t.rows.iter().all(|r| r.cells.len() == 1000));
+        assert_eq!(t.cell(99, 0).unwrap().text.text(), "TAIL");
+        let once = t.clone();
+        t.normalize();
+        assert_eq!(t, once);
+        let mut normal = Table::new(4, 4, 400.0, 30.0);
+        let before = normal.clone();
+        assert!(normal.try_normalize());
+        assert_eq!(normal, before);
+    }
+
+    #[test]
+    fn normalize_refuses_oversized_grids_without_dropping_stored_cells() {
+        let mut t = Table::new(101, 1000, 400.0, 30.0);
+        t.cell_mut(100, 999).unwrap().text = TextBody::from_text("POPULATED-TAIL");
+        let before = t.clone();
+        assert!(!t.try_normalize());
+        assert_eq!(t, before);
+        t.normalize(); // Legacy import/export callers may ignore the explicit result.
+        assert_eq!(t, before);
+        assert!(t.is_normalized(), "rectangular storage stays rectangular even above the edit limit");
+        let mut t = Table { cols: vec![1.0; MAX_CELLS + 5], rows: vec![Row::default(); 3], ..Default::default() };
+        let before = t.clone();
+        assert!(!t.try_normalize());
+        t.normalize();
+        assert_eq!(t, before);
+        let mut empty_cols = Table { rows: vec![Row::default(); MAX_CELLS + 3], ..Default::default() };
+        let before = empty_cols.clone();
+        empty_cols.normalize();
+        assert_eq!(empty_cols, before);
+        assert!(!Table::fits_cell_limit(usize::MAX, usize::MAX));
+        assert!(!Table::fits_cell_limit(1, usize::MAX));
+    }
+
+    #[test]
+    fn normalize_never_removes_cells_beyond_declared_columns() {
+        let mut t = Table {
+            cols: vec![10.0; 2],
+            rows: vec![Row { cells: vec![Cell::new("a"), Cell::new("b"), Cell::new("KEEP")], ..Default::default() }],
+            ..Default::default()
+        };
+        let before = t.clone();
+        assert!(!t.try_normalize());
+        t.normalize();
+        assert_eq!(t, before);
+    }
+
+    #[test]
+    fn legacy_insert_then_normalize_preserves_the_entire_grown_table() {
+        let mut t = Table::new(100, 1000, 400.0, 30.0);
+        t.cell_mut(99, 999).unwrap().text = TextBody::from_text("ROW-TAIL");
+        t.insert_row(0);
+        t.normalize();
+        assert_eq!((t.n_rows(), t.n_cols()), (101, 1000));
+        assert_eq!(t.cell(100, 999).unwrap().text.text(), "ROW-TAIL");
+        let mut t = Table::new(1000, 100, 400.0, 30.0);
+        t.cell_mut(999, 99).unwrap().text = TextBody::from_text("COL-TAIL");
+        t.insert_col(0);
+        t.normalize();
+        assert_eq!((t.n_rows(), t.n_cols()), (1000, 101));
+        assert_eq!(t.cell(999, 100).unwrap().text.text(), "COL-TAIL");
+    }
+
+    #[test]
+    fn overlapping_file_spans_rebuild_in_bounded_work() {
+        // Every cell an uncovered anchor spanning to the far corner: their areas add up to about
+        // n^4 / 4, but only what fits the grid is kept, so an edit's rebuild stays near n^2.
+        let n = 200;
+        let mut t = Table::new(n, n, 400.0, 30.0);
+        for row in &mut t.rows {
+            for c in &mut row.cells {
+                c.grid_span = u32::MAX;
+                c.row_span = u32::MAX;
+            }
+        }
+        assert_eq!(t.merges().len(), 1, "the first anchor already covers the whole grid");
+        t.insert_row(n);
+        assert_eq!(t.n_rows(), n + 1);
+        assert!(t.split(0, 0));
     }
 
     fn merged() -> Table {
