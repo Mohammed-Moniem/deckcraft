@@ -167,12 +167,10 @@ fn comment_card(app: &mut SlideApp, ui: &mut Ui, slide: usize, index: usize, c: 
                         focus_comment(app, slide, index);
                     }
                     let admitted = app.office_record_draft(&key, "", &txt);
-                    if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && !txt.trim().is_empty() {
-                        if admitted {
-                            match app.office_commit_draft(&key, "comment.reply", json!({"index": index, "text": txt})) {
-                                Ok(_) => txt.clear(),
-                                Err(error) => app.set_status(error),
-                            }
+                    if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && !txt.trim().is_empty() && admitted {
+                        match app.office_commit_draft(&key, "comment.reply", json!({"index": index, "text": txt})) {
+                            Ok(_) => txt.clear(),
+                            Err(error) => app.set_status(error),
                         }
                     }
                     if !txt.is_empty() && ui.small_button("Discard reply").clicked() {

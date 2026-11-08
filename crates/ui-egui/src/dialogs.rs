@@ -136,10 +136,9 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
             }
             if let Some(owner) = &d.owner
                 && ui.button("Return to draft owner").clicked()
+                && let Some(index) = app.session.documents().iter().position(|st| st.uid == owner.uid)
             {
-                if let Some(index) = app.session.documents().iter().position(|st| st.uid == owner.uid) {
-                    app.session.set_active(index);
-                }
+                app.session.set_active(index);
             }
             if let Some(owner) = d.owner.clone()
                 && ui.button("Resume on original target").clicked()
@@ -151,17 +150,15 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
             }
             if let Some(owner) = &d.owner
                 && ui.button("Undo in original presentation").clicked()
+                && let Err(error) = owner.history(app, false)
             {
-                if let Err(error) = owner.history(app, false) {
-                    app.set_status(error);
-                }
+                app.set_status(error);
             }
             if let Some(owner) = &d.owner
                 && ui.button("Redo in original presentation").clicked()
+                && let Err(error) = owner.history(app, true)
             {
-                if let Err(error) = owner.history(app, true) {
-                    app.set_status(error);
-                }
+                app.set_status(error);
             }
             if ui.button("Discard draft").clicked() {
                 close = true;

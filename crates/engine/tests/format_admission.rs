@@ -85,8 +85,8 @@ fn unsupported_inferred_paths_leave_files_and_document_unchanged() {
                 );
                 if result.is_ok() || !file_unchanged || !state_unchanged {
                     failures.push(format!("{command} {name} exists={exists}: {result:?}"));
-                } else {
-                    assert!(result.unwrap_err().to_string().contains("unsupported output format"));
+                } else if let Err(error) = result {
+                    assert!(error.to_string().contains("unsupported output format"));
                 }
                 let _ = std::fs::remove_file(&path);
                 assert_eq!(std::fs::read_dir(&dir.0).unwrap().count(), 0, "no temporary files may remain");

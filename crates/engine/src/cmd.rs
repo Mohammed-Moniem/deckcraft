@@ -433,6 +433,17 @@ pub(crate) fn shape_of(s: &Session, id: ShapeId) -> Result<deckcraft_model::Shap
 pub fn xfrm_of(doc: &deckcraft_model::Presentation, sel: &crate::Selection, shape: &deckcraft_model::Shape) -> Xfrm {
     let mut x = shape.xfrm.unwrap_or_else(|| ctx_xfrm(doc, sel, shape));
     if let deckcraft_model::ShapeKind::Table(t) = &shape.kind {
+        // Fill supported sparse grids for consistent edit measurements. Unsupported grids
+        // retain their stored data; measuring them is not a whole-table resource bound.
+        let normalized;
+        let t = if t.is_normalized() || !t.can_normalize() {
+            t
+        } else {
+            let mut n = t.clone();
+            n.normalize();
+            normalized = n;
+            &normalized
+        };
         let drawn: f64 = table_drawn_heights(doc, sel, t).iter().sum();
         if drawn.is_finite() && drawn > x.h {
             x.h = drawn;

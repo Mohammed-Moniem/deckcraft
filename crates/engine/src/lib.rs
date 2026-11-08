@@ -658,6 +658,11 @@ impl Session {
     /// failed outer command, and committing the resulting undo entry or journal record.
     fn execute_unguarded(&mut self, id: &str, params: &Value) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.into()))?;
+        // A known table-limit refusal must not commit preedit text, clear redo or tell the
+        // host to interrupt its composition. Successful commands still settle it below.
+        if self.depth == 0 && self.active().is_some_and(|st| st.composition.is_some()) {
+            cmd::table::preflight_table_budget(self, id, params)?;
+        }
         // Any other edit (or a click, a key, undo) settles an input method's composition first.
         if self.depth == 0 && (spec.journal || spec.undoable) && !matches!(id, "text.compose" | "text.commit") {
             self.settle_composition();
